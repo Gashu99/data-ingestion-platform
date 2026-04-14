@@ -1,0 +1,136 @@
+version: '3'
+
+services:
+
+  # HDFS Namenode
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: namenode
+    ports:
+      - "9870:9870"
+    environment:
+      - CLUSTER_NAME=mon-cluster
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    volumes:
+      - hadoop_namenode:/hadoop/dfs/name
+    networks:
+      - hadoop-network
+
+  # HDFS Datanode
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode
+    depends_on:
+      - namenode
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    volumes:
+      - hadoop_datanode:/hadoop/dfs/data
+    networks:
+      - hadoop-network
+
+  # YARN Resource Manager
+  resourcemanager:
+    image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
+    container_name: resourcemanager
+    depends_on:
+      - namenode
+      - datanode
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    ports:
+      - "8088:8088"
+    networks:
+      - hadoop-network
+
+  # Hive
+  hive-server:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-server
+    depends_on:
+      - namenode
+      - datanode
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+      - HIVE_CORE_CONF_javax_jdo_option_ConnectionURL=jdbc:postgresql://hive-metastore/metastore
+    ports:
+      - "10000:10000"
+      - "10002:10002"
+    networks:
+      - hadoop-network
+
+  # Hive Metastore (base de données pour Hive)
+  hive-metastore:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-metastore
+    depends_on:
+      - namenode
+      - datanode
+      - hive-metastore-postgresql
+    networks:
+      - hadoop-network
+
+  # PostgreSQL pour le metastore Hive
+  hive-metastore-postgresql:
+    image: bde2020/hive-metastore-postgresql:2.3.0
+    container_name: hive-metastore-postgresql
+    networks:
+      - hadoop-network
+
+  # Spark Master
+  spark-master:
+    image: bitnami/spark:3
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_MASTER_URL=spark://spark-master:7077
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+    networks:
+      - hadoop-network
+
+  # Spark Worker
+  spark-worker:
+    image: bitnami/spark:3
+    container_name: spark-worker
+    depends_on:
+      - spark-master
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+    networks:
+      - hadoop-network
+
+  # Airflow
+  airflow:
+    image: apache/airflow:2.7.0
+    container_name: airflow
+    depends_on:
+      - namenode
+    ports:
+      - "8090:8080"
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/airflow.db
+    volumes:
+      - ../dags:/opt/airflow/dags
+      - ../logs:/opt/airflow/logs
+    networks:
+      - hadoop-network
+    command: >
+      bash -c "airflow db init &&
+               airflow users create --username admin --password admin
+               --firstname Admin --lastname Admin
+               --role Admin --email admin@example.com &&
+               airflow webserver & airflow scheduler"
+
+networks:
+  hadoop-network:
+    driver: bridge
+
+volumes:
+  hadoop_namenode:
+  hadoop_datanode:
